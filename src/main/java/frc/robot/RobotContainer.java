@@ -4,11 +4,18 @@
 
 package frc.robot;
 
-import edu.wpi.first.wpilibj.Joystick;
-import edu.wpi.first.wpilibj.XboxController;
+import choreo.auto.AutoChooser;
+import edu.wpi.first.wpilibj.PowerDistribution;
+import edu.wpi.first.wpilibj.PowerDistribution.ModuleType;
+import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.button.CommandJoystick;
+import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
+import edu.wpi.first.wpilibj2.command.button.Trigger;
 import frc.robot.Constants.OperatorConstants;
 import frc.robot.subsystems.Swerve;
 import frc.robot.subsystems.Vision;
+import frc.robot.util.Auto;
 import frc.robot.util.ControllerInput;
 
 /**
@@ -22,18 +29,43 @@ import frc.robot.util.ControllerInput;
  */
 public class RobotContainer {
 
-	Joystick joystick = new Joystick(OperatorConstants.driverControllerPort);
-	XboxController xboxController = new XboxController(1);
+	CommandJoystick joystick = new CommandJoystick(OperatorConstants.operatorControllerPort);
+	CommandXboxController xboxController = new CommandXboxController(OperatorConstants.driverControllerPort);
 
-	ControllerInput controller = new ControllerInput(xboxController);
-	Vision visionSystem = new Vision(Constants.VisionConstants.ipAddress, Constants.VisionConstants.CameraRotations, Constants.VisionConstants.apriltagAngles); 
+	PowerDistribution powerDistribution = new PowerDistribution(16, ModuleType.kRev);
+
+	ControllerInput controller = new ControllerInput(xboxController, joystick);
+	Vision visionSystem = new Vision(
+        Constants.VisionConstants.ipAddress, 
+        Constants.VisionConstants.CameraRotations, 
+        null); 
 
 	Swerve swerve = new Swerve(controller, visionSystem);
+
+	final AutoChooser autoChooser;
+    Auto auto = new Auto(swerve);
 
 	/**
 	 * The container for the robot. Contains subsystems, OI devices, and commands.
 	 */
 	public RobotContainer() {
+		
+		autoChooser = new AutoChooser();
+
+        autoChooser.addRoutine("FromLeft", auto::fromLeft);
+        autoChooser.addRoutine("FromMid", auto::fromMid);
+        autoChooser.addRoutine("FromRight", auto::fromRight);
+
+        SmartDashboard.putData("Autos", autoChooser);
+
+        autoChooser.select("FromMid");
+
+        SmartDashboard.putData("Swerve", swerve);
+        SmartDashboard.putData("Field", swerve.field);
+        SmartDashboard.putData("Gyro", swerve.gyroAhrs);
+
+        SmartDashboard.putData("Power Distribution", powerDistribution);
+
 		// Configure the trigger bindings
 		configureBindings();
 	}
@@ -54,6 +86,28 @@ public class RobotContainer {
 	 */
 	private void configureBindings() {
 
+		// driver bindings 
+        xboxController.start()
+            .onChange(controller.toggleNos);
+
+        xboxController.leftTrigger(0.75)
+            .onChange(controller.toggleFeildRelative);
+
+        xboxController.rightBumper()
+            .onTrue(controller.upShift);
+        
+        xboxController.leftBumper()
+            .onTrue(controller.downShift);
+
+        xboxController.b()
+            .onChange(controller.toggleRightBumper);
+        
+        xboxController.x()
+            .onChange(controller.toggleLeftBumper);
+        
+        xboxController.a()
+            .onChange(controller.a);
+
 	}
 
 	/**
@@ -61,8 +115,7 @@ public class RobotContainer {
 	 *
 	 * @return the command to run in autonomous
 	 */
-	// public Command getAutonomousCommand() {
-	// An example command will be run in autonomous
-	// return Autos.exampleAuto(m_exampleSubsystem);
-	// }
+	public Command getAutonomousCommand() {
+		return autoChooser.selectedCommandScheduler();
+	}
 }

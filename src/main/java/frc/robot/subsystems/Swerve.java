@@ -1,364 +1,298 @@
 package frc.robot.subsystems;
 
-import java.util.concurrent.TimeUnit;
-
+import choreo.trajectory.SwerveSample;
 import com.studica.frc.AHRS;
 import com.studica.frc.AHRS.NavXComType;
-import com.revrobotics.spark.SparkBase.ControlType;
-import com.revrobotics.spark.SparkBase.PersistMode;
-import com.revrobotics.spark.SparkBase.ResetMode;
-import com.revrobotics.spark.config.ClosedLoopConfig.FeedbackSensor;
-import com.revrobotics.spark.config.SparkBaseConfig.IdleMode;
-import com.revrobotics.spark.SparkLowLevel;
-import com.revrobotics.spark.SparkMax;
-import com.revrobotics.REVLibError;
-import com.revrobotics.RelativeEncoder;
-import com.revrobotics.spark.config.SparkMaxConfig;
-import com.revrobotics.spark.SparkAbsoluteEncoder;
-import com.revrobotics.spark.SparkClosedLoopController;
-
 import edu.wpi.first.math.controller.PIDController;
-import edu.wpi.first.math.geometry.Rotation2d;
+import edu.wpi.first.math.estimator.SwerveDrivePoseEstimator;
+import edu.wpi.first.math.geometry.Pose2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
+import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
+import edu.wpi.first.util.sendable.SendableBuilder;
+import edu.wpi.first.wpilibj.DriverStation;
 import edu.wpi.first.wpilibj.Timer;
+import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
-import frc.robot.Constants.DriverConstants;
+import frc.robot.Constants.DriveConstants;
+import frc.robot.Constants.VisionConstants;
 import frc.robot.util.ControllerInput;
 import frc.robot.util.ControllerInput.VisionStatus;
+import frc.robot.util.SwerveModule;
 
-public class Swerve extends SubsystemBase{
-
+/**
+ * The physical subsystem that controls the drivetrain.
+ */
+public class Swerve extends SubsystemBase {
     private final ControllerInput controllerInput;
 
-    private final SparkMax[] swerveMotors = new SparkMax[4];
-    private final SparkMaxConfig[] swerveConfig = new SparkMaxConfig[4];
+    private final Vision visionSystem; 
+    public final AHRS gyroAhrs;
 
-    private final SparkMax[] driveMotors = new SparkMax[4];
-    private final SparkMaxConfig[] driveConfig = new SparkMaxConfig[4];
+    private final SwerveModule[] swerveModules = new SwerveModule[4];
 
-    private final RelativeEncoder[] swerveEncoders = new RelativeEncoder[4];
+    private final SwerveDrivePoseEstimator poseEstimator;
+    private Pose2d currentPose;
+    public Field2d field;
 
-    private final SparkAbsoluteEncoder[] swerveEncodersAbsolute = new SparkAbsoluteEncoder[4];
-
-    private final SparkClosedLoopController[] swervePID = new SparkClosedLoopController[4];
-
-
+    private final PIDController xController = new PIDController(
+        DriveConstants.xyP, DriveConstants.xyI, DriveConstants.xyD);
+    private final PIDController yController = new PIDController(
+        DriveConstants.xyP, DriveConstants.xyI, DriveConstants.xyD);
     private final PIDController turnPID = new PIDController(
-        0.02,
-        0.01,
-        0.00,
-        0.02
-    );
+        DriveConstants.turnP, DriveConstants.turnI, DriveConstants.turnD, DriveConstants.turnR);
 
     private final SwerveDriveKinematics swerveDriveKinematics = new SwerveDriveKinematics(
-        DriverConstants.frontLeft,
-        DriverConstants.frontRight,
-        DriverConstants.backLeft,
-        DriverConstants.backRight
+        DriveConstants.frontLeft, DriveConstants.frontRight,
+        DriveConstants.backLeft, DriveConstants.backRight
     );
 
-    double lastMotorSpeeds[] = new double[4];
-    double lastMotorSetTimes[] = new double[4];
+    private double startTime = Timer.getTimestamp();
 
-    private final Vision visionSystem; 
-    private final AHRS gyroAhrs;
+    /**
+     * Constructs a swerve subsystem with the given controller and vision systems.
 
-    private double turnTarget = 0;
-
-    private double[] initialStates = new double[4];
-
-    boolean setupComplete = false;
-
-    public class SwerveAngleSpeed {
-        double targetAngle;
-        int multiplier;
-    }
-
+     * @param controller - the controller object that will be used to control the drive system
+     * @param visionSystem - the vision system that will be used to control the drivetrain
+     */
     public Swerve(ControllerInput controller, Vision visionSystem) {
 
         // assign constructor variables
         this.controllerInput = controller;
         this.visionSystem = visionSystem;
 
+        // pose of the swerve is initialized to real values in Auto when auto routine is run
+        this.currentPose = new Pose2d();
+        this.field = new Field2d();
+
         // define the gyro
         gyroAhrs = new AHRS(NavXComType.kMXP_SPI);
         // reset the gyro
         gyroAhrs.reset();
+        gyroAhrs.configureVelocity(
+            false,
+            false,
+            false,
+            true
+        );
 
         // sets up the motors
-        setupMotors();
+        setupModules();
+        
+        // define pose estimator
+        poseEstimator = new SwerveDrivePoseEstimator(
+            swerveDriveKinematics,
+            gyroAhrs.getRotation2d(),
+            getSwerveModulePositions(),
+            currentPose 
+        );
 
+        turnPID.enableContinuousInput(-Math.PI, Math.PI);
     }
 
     @Override
     public void periodic() {
-        if (setupComplete) {
-            swerveDrive(chooseDriveMode());
-        } else setupCheck();
-    }
+        currentPose = poseEstimator.updateWithTime(
+            startTime - Timer.getTimestamp(), gyroAhrs.getRotation2d(), getSwerveModulePositions());
 
-    private ChassisSpeeds chooseDriveMode() {
+        field.setRobotPose(currentPose);
+
+        if (!DriverStation.isAutonomousEnabled()) swerveDrive(getDriveSpeeds());
+    }
+     
+    /**
+     * Depending on the vision status, returns either chassis speeds based on controller inputs, or vision tag drive
+     * 
+     * @return ChassisSpeeds for the swerve drive to run
+     */
+    private ChassisSpeeds getDriveSpeeds() {
         VisionStatus status = controllerInput.visionStatus();
         ChassisSpeeds speeds;
 
+        // if we are doing vision, then reset the gyro to prevent "whiplash"
+        if (controllerInput.visionStatus() != VisionStatus.NONE) {
+            controllerInput.setTurnTarget(gyroAhrs.getRotation2d().getRadians());
+        }
+
         switch (status) {
-            case ALIGN_TAG:
-                speeds = visionSystem.getTagDrive(0); 
+            case LEFT_POSITION: // lines the robot up with the tag
+                speeds = visionSystem.getTagDrive(VisionConstants.cameraPair, VisionConstants.tagIDs, Vision.Side.LEFT, VisionConstants.leftOffset);
                 break;
-            case LOCKON:
-                // TODO: lockon goes here once done
+            case RIGHT_POSITION: // lines the robot up with the tag
+                speeds = visionSystem.getTagDrive(VisionConstants.cameraPair, VisionConstants.tagIDs, Vision.Side.FRONT, VisionConstants.rightOffset);
+                break;
+            case STRAIGHT_POSITION: // lines the robot up with the tag
+                speeds = visionSystem.getTagDrive(VisionConstants.cameraPair, VisionConstants.tagIDs, Vision.Side.FRONT, VisionConstants.straightOffset);
+                break;
+            case LOCKON: // allows the robot to move freely by user input but remains facing the tag
+                // TODO: lock on with both cameras
+                ChassisSpeeds controllerSpeeds = controllerInput.controllerChassisSpeeds(
+                    turnPID, gyroAhrs.getRotation2d());
+                ChassisSpeeds lockonSpeeds = visionSystem.lockonTagSpeeds(0, null);
+                speeds = new ChassisSpeeds(
+                    controllerSpeeds.vxMetersPerSecond,
+                    controllerSpeeds.vyMetersPerSecond,
+                    lockonSpeeds.omegaRadiansPerSecond
+                );
+                break;
             default: // if all else fails - revert to drive controls
-                speeds = controllerChassisSpeeds();
+                speeds = controllerInput.controllerChassisSpeeds(turnPID, gyroAhrs.getRotation2d());
                 break;
         }
+
+        // this should never execute, but for our peace of mind
+        if (speeds == null) speeds = controllerInput.controllerChassisSpeeds(turnPID, gyroAhrs.getRotation2d());
 
         return speeds;
     }
 
-    private void setupCheck() {
-        visionSystem.clear();
+    /**
+     * Moves the robot using given ChassisSpeeds object.
+
+     * @param chassisSpeeds - the chassis speed that the robot should take
+     */
+    public void swerveDrive(ChassisSpeeds chassisSpeeds) {
+        SwerveModuleState[] moduleState = swerveDriveKinematics.toSwerveModuleStates(chassisSpeeds);
+        boolean rotate = chassisSpeeds.vxMetersPerSecond != 0 
+                        || chassisSpeeds.vyMetersPerSecond != 0 
+                        || chassisSpeeds.omegaRadiansPerSecond != 0;
+
+        SwerveDriveKinematics.desaturateWheelSpeeds(moduleState, DriveConstants.highDriveSpeed);
+
         for (int i = 0; i < 4; i++) {
-            if (i == 1) continue; // don't mess with bob - remove this when we get him fixed
-            if (Math.abs(swerveEncoders[i].getPosition() - DriverConstants.absoluteOffsets[i]) > 1.5) return;
-        }
-        setupComplete = true;
-        resetEncoders();
-        for (int i = 0; i < 4; i++) swervePID[i].setReference(0, ControlType.kPosition);
-        try {TimeUnit.MILLISECONDS.sleep(20);} catch (InterruptedException e) {e.getStackTrace();}
-    }
-
-    private void setupMotors() {
-
-        // if this needs to loop more than 4 times, something is very wrong
-        for (int i = 0; i < 4; i++) {
-
-            swerveMotors[i] = new SparkMax(
-                DriverConstants.swerveMotorPorts[i],
-                SparkLowLevel.MotorType.kBrushless
-            );
-
-            driveMotors[i] = new SparkMax(
-                DriverConstants.driveMotorPorts[i],
-                SparkLowLevel.MotorType.kBrushless
-            );
-            
-            swerveEncoders[i] = swerveMotors[i].getEncoder();
-            swerveEncodersAbsolute[i] = swerveMotors[i].getAbsoluteEncoder();
-
-
-            swerveConfig[i]
-                .inverted(true)
-                .idleMode(IdleMode.kBrake)
-                .smartCurrentLimit(15);
-
-            driveConfig[i]
-                .inverted(false)
-                .idleMode(IdleMode.kBrake)
-                .smartCurrentLimit(30);
-
-
-            swerveConfig[i].encoder
-                .positionConversionFactor(360 / 12.8)
-                .positionConversionFactor(1);
-
-            driveConfig[i].encoder
-                .positionConversionFactor(1)
-                .velocityConversionFactor(1);
-
-
-            swerveConfig[i].closedLoop
-                .feedbackSensor(FeedbackSensor.kPrimaryEncoder)
-                .pidf(
-                    DriverConstants.swerveP,
-                    DriverConstants.swerveI,
-                    DriverConstants.swerveD,
-                    DriverConstants.swerveFF
-                )
-                .iZone(0)
-                .outputRange(-1, 1);
-
-            swerveConfig[i].signals
-                .primaryEncoderPositionPeriodMs(20);
-
-            driveConfig[i].signals
-                .primaryEncoderPositionPeriodMs(100);
-
-            // save config into the sparks
-            swerveMotors[i].configure(swerveConfig[i], ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
-            driveMotors[i].configure(driveConfig[i], ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
-
-
-            double relativeZero = getAbsolutePosition(i);
-
-            REVLibError error = swerveEncoders[i].setPosition(relativeZero);
-
-            // set the swerve pid to try to reset to zero
-            if (i == 1) continue; // ignore bob - remove this when he's fixed
-            swervePID[i].setReference(
-                DriverConstants.absoluteOffsets[i],
-                SparkMax.ControlType.kPosition
-            );
-
-            if (error.equals(REVLibError.kOk)) System.out.println("Motor controller took value");
-
-            initialStates[i] = relativeZero;
-
-        }
-
-        turnPID.disableContinuousInput();
-        turnPID.setSetpoint(0);
-    }
-
-    public SwerveDriveKinematics getSwerveDriveKinematics() {return swerveDriveKinematics;}
-
-    public ChassisSpeeds getRobotState() {return swerveDriveKinematics.toChassisSpeeds(getSwerveModuleState());}
-
-    public double getAngle() {return gyroAhrs.getAngle();}
-
-    public void resetGyro() {
-        gyroAhrs.reset();
-        turnTarget = 0;
-    }
-
-    public void resetEncoders() {
-        for (int i = 0; i < 4; i++) {
-            swerveEncoders[i].setPosition(0);
+            SwerveModuleState targetState = moduleState[i];
+            swerveModules[i].driveModule(targetState, rotate, controllerInput.nos(), controllerInput.throttle());
         }
     }
 
-    double doubleMod(double x, double y) {
-        // x mod y behaving the same way as Math.floorMod but with doubles
-        return (x - Math.floor(x / y) * y);
-    }
+    /**
+     * Get an array of SwerveModuleState objects for each swerve module in the drive.
 
-    public double getAbsolutePosition(int moduleNumber) {
-        return 360 - (swerveEncodersAbsolute[moduleNumber].getPosition() * 360);
-    }
-
-    public SwerveModuleState[] getSwerveModuleState() {
+     * @return swerveModuleStates - the array of module states
+     */
+    public SwerveModuleState[] getSwerveModuleStates() {
         SwerveModuleState[] swerveModuleState = new SwerveModuleState[4];
         for (int i = 0; i < 4; i++) {
-            SwerveModuleState moduleState = new SwerveModuleState(
-                    (driveMotors[i].getEncoder().getVelocity() / 60d) * DriverConstants.metersPerRotation,
-                    Rotation2d.fromDegrees(getAbsolutePosition(i)));
-            swerveModuleState[i] = moduleState;
+            swerveModuleState[i] = swerveModules[i].getSwerveModuleState();
         }
         return swerveModuleState;
     }
 
-    public ChassisSpeeds controllerChassisSpeeds() {
-        double turnSpeed = 0;
-        if (Math.abs(controllerInput.theta()) < 0.01) {
-            double error = turnTarget + getAngle();
-            turnPID.setSetpoint(0);
-            if (Math.abs(error) > 2) turnSpeed = turnPID.calculate(error);
-            turnSpeed = 0;
-        } else  {
-            turnSpeed = controllerInput.theta(); // code orange multiplies this by 6
-            turnTarget = getAngle();
-        }
+    /**
+     * Get an array of SwerveModulePosition objects for each swerve module in the drive.
 
-        if (controllerInput.fieldRelative()){
-                ChassisSpeeds chassisSpeeds = ChassisSpeeds.fromFieldRelativeSpeeds(
-                DriverConstants.highDriveSpeed * controllerInput.x(),
-                DriverConstants.highDriveSpeed * controllerInput.y(),
-                turnSpeed,
-                Rotation2d.fromDegrees(getAngle())
-                //Rotation2d.fromDegrees(0)
-            );
-
-            return chassisSpeeds;
-        }
-
-        // If we are not in field relative mode, we are in robot relative mode, so dont do the field thing
-        ChassisSpeeds chassisSpeeds = new ChassisSpeeds(
-            DriverConstants.highDriveSpeed * controllerInput.x(),
-            DriverConstants.highDriveSpeed * controllerInput.y(),
-            turnSpeed
-        );
-
-        return chassisSpeeds;
-    }
-
-    public void swerveDrive(ChassisSpeeds chassisSpeeds) {
-
-        SwerveModuleState[] moduleState = swerveDriveKinematics.toSwerveModuleStates(chassisSpeeds);
-        boolean rotate = chassisSpeeds.vxMetersPerSecond != 0 || chassisSpeeds.vyMetersPerSecond != 0 || chassisSpeeds.omegaRadiansPerSecond != 0;
-
-        SwerveDriveKinematics.desaturateWheelSpeeds(moduleState, DriverConstants.highDriveSpeed);
-
+     * @return swerveModulePositions - the array of module postions
+     */
+    public SwerveModulePosition[] getSwerveModulePositions() {
+        SwerveModulePosition[] swerveModulePositions = new SwerveModulePosition[4];
         for (int i = 0; i < 4; i++) {
-            SwerveModuleState targetState = moduleState[i];
-            double currentAngle = swerveEncoders[i].getPosition();
-            double targetAngle = targetState.angle.getDegrees();
-            SwerveAngleSpeed absoluteTarget = getAbsoluteTarget(targetAngle, currentAngle);
-            
-            //System.out.printf("%f, %f, %f\n", currentAngle, targetAngle, absoluteTarget);
+            swerveModulePositions[i] = swerveModules[i].getSwerveModulePosition();
+        }
+        return swerveModulePositions;
+    }
 
-            //System.out.println("Driving");
 
-            if (rotate) {
-                swervePID[i].setReference(absoluteTarget.targetAngle, SparkMax.ControlType.kPosition);
-            }
+    private void setupModules() {
+        System.out.println("Setting up swerve modules");
 
-            setMotorSpeed(i, absoluteTarget.multiplier * targetState.speedMetersPerSecond * DriverConstants.speedModifier);
-            // driveMotors[i].set(
-            //     controllerInput.getMagnitude() 
-            //     * (controllerInput.nos() ? DriverConstants.highDriveSpeed : DriverConstants.standardDriveSpeed)
-            //     * DriverConstants.speedModifier
-            // );
-
+        // if this needs to loop more than 4 times, something is very wrong
+        for (int i = 0; i < 4; i++) {
+            swerveModules[i] = new SwerveModule(i);
         }
     }
 
-    public void setMotorSpeed(int module, double velocity) {
-        double time = Timer.getFPGATimestamp();
-        double acceleration = time - lastMotorSetTimes[module] > 0.1
-            ? 0
-            : (velocity - lastMotorSpeeds[module]) / (time - lastMotorSetTimes[module]);
+    private void setSwerveEncoders(double position) {
+        for (int i = 0; i < 4; i++) {
+            swerveModules[i].setSwerveEncoder(position);
+        }
+    }
 
-        double ffv = DriverConstants.driveFeedForward[module].calculateWithVelocities(velocity, acceleration);
-        driveMotors[module].setVoltage(ffv);
-        lastMotorSpeeds[module] = velocity;
-        lastMotorSetTimes[module] = time;
+    public SwerveModule[] getModules() {return swerveModules;}
+
+    public SwerveDriveKinematics getSwerveDriveKinematics() {return swerveDriveKinematics;}
+
+    public ChassisSpeeds getRobotState() {return swerveDriveKinematics.toChassisSpeeds(getSwerveModuleStates());}
+
+    public Pose2d getPose() {return currentPose;} 
+
+    public void setPose(Pose2d pose) {currentPose = pose;}
+
+    public void resetGyro() {gyroAhrs.reset();}
+
+    /** Prints the states of all 4 swerve modules. */
+    public void printModuleStatus() {
+        for (int i = 0; i < 4; i++) {
+            swerveModules[i].printModuleStatus();
+        }
     }
 
     /**
-     * Returns the absolute angle a module needs to approach
-     * @param targetAngle - the angle the module should be at
-     * @param currentAngle - the current position of the module
-     * @return absoluteTarget - the absolute angle the module needs to approach
+     * Sets the robot's odometry to match that of the given pose.
+
+     * @param pose - the pose that the robot should assume
      */
+    public void resetOdometry(Pose2d pose) {
 
-    
-    private SwerveAngleSpeed getAbsoluteTarget(double targetAngle, double currentAngle) {
+        resetGyro();
+        gyroAhrs.setAngleAdjustment(pose.getRotation().getDegrees());
 
-        targetAngle += 180;
-        int multiplier = 1;
+        currentPose = pose;
+        poseEstimator.resetPose(pose);
 
-        double angleDiff = targetAngle - doubleMod(doubleMod(currentAngle, 360) + 360, 360);
+    }
 
-        if (angleDiff > 180) {
-            angleDiff -= 360;
-        } else if (angleDiff < -180) {
-            angleDiff += 360;
-        }
+    @Override
+    public void initSendable(SendableBuilder builder) {
 
-        if (angleDiff < -90){
-            angleDiff += 180;
-            multiplier = -1;
-        } else if (angleDiff > 90){
-            angleDiff -= 180;
-            multiplier = -1;
-        }
+        builder.setSmartDashboardType("SwerveDrive");     
 
-        SwerveAngleSpeed returnThing = new SwerveAngleSpeed();
-        returnThing.multiplier = multiplier;
-        returnThing.targetAngle = currentAngle + angleDiff;
+        builder.addDoubleProperty("Front Left Angle", () -> getSwerveModuleStates()[0].angle.getDegrees(), null);
+        builder.addDoubleProperty("Front Left Velocity", () -> swerveModules[0].currentState.speedMetersPerSecond / 10, null);
 
-        return returnThing;
+        builder.addDoubleProperty("Front Right Angle", () -> swerveModules[1].currentState.angle.getDegrees(), null);
+        builder.addDoubleProperty("Front Right Velocity", () -> swerveModules[1].currentState.speedMetersPerSecond / 10, null);
+
+        builder.addDoubleProperty("Back Left Angle", () -> swerveModules[2].currentState.angle.getDegrees(), null);
+        builder.addDoubleProperty("Back Left Velocity", () -> swerveModules[2].currentState.speedMetersPerSecond / 10, null);
+
+        builder.addDoubleProperty("Back Right Angle", () -> swerveModules[3].currentState.angle.getDegrees(), null);
+        builder.addDoubleProperty("Back Right Velocity", () -> swerveModules[3].currentState.speedMetersPerSecond / 10, null);
+
+        builder.addDoubleProperty("Robot Angle", () -> gyroAhrs.getRotation2d().getDegrees(), null);
+
+        builder.addDoubleProperty("Match Time", () -> DriverStation.getMatchTime(), null);
+
+        builder.addBooleanProperty("Module 0 Encoder", () -> 
+            swerveModules[0].getAbsoluteEncoderConnected(), null);
+        builder.addBooleanProperty("Module 1 Encoder", () -> 
+            swerveModules[1].getAbsoluteEncoderConnected(), null);
+        builder.addBooleanProperty("Module 2 Encoder", () -> 
+            swerveModules[2].getAbsoluteEncoderConnected(), null);
+        builder.addBooleanProperty("Module 3 Encoder", () -> 
+            swerveModules[3].getAbsoluteEncoderConnected(), null);
+        
+    }
+
+
+    // =============== AUTO STUFF ==================== //
+
+    /**
+     * Compiles and drives a ChassisSpeeds object from a given SwerveSample along the trajectory.
+
+     * @param sample - the SwerveSample object that the robot should follow
+     */
+    public void followTrajectory(SwerveSample sample) {
+        Pose2d pose = getPose();
+
+        ChassisSpeeds speeds = ChassisSpeeds.fromFieldRelativeSpeeds(
+            sample.vx + xController.calculate(pose.getX(), sample.x),
+            sample.vy + yController.calculate(pose.getY(), sample.y),
+            sample.omega + turnPID.calculate(pose.getRotation().getRadians(), sample.heading),
+            gyroAhrs.getRotation2d()
+        );
+
+        swerveDrive(speeds);
     }
 
 }
