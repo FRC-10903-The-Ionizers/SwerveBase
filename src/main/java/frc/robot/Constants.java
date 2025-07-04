@@ -55,6 +55,8 @@ public final class Constants {
             backRightDrivePort
         };
 
+        public static final boolean useEncoders = false;
+
         public static final int frontLeftEncoder = 0;
         public static final int frontRightEncoder = 1;
         public static final int backLeftEncoder = 3;

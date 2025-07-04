@@ -51,6 +51,12 @@ public class ControllerInput extends SubsystemBase {
         this.visionStatus = VisionStatus.NONE;
     }
 
+    public ControllerInput(CommandXboxController controller) {
+        this.controller = controller;
+        this.joystick = null;
+        this.visionStatus = VisionStatus.NONE;
+    }
+
     @Override
     public void periodic() {
         // controls the X and Y directions of the robot respectively
@@ -69,8 +75,9 @@ public class ControllerInput extends SubsystemBase {
         if (Math.abs(theta) < 0.05) {
             theta = 0;
         }
-
-        slider = (joystick.getRawAxis(3) + 1) / 2;
+        
+        
+        if (this.joystick != null) slider = (joystick.getRawAxis(3) + 1) / 2;
         
         if (leftBumper && rightBumper) visionStatus = VisionStatus.STRAIGHT_POSITION;
         else if (leftBumper) visionStatus = VisionStatus.LEFT_POSITION;

@@ -67,7 +67,8 @@ public class SwerveModule extends SubsystemBase {
             SparkLowLevel.MotorType.kBrushless
         );
         swerveEncoder = swerveMotor.getEncoder();
-        swerveEncoderAbsolute = new DutyCycleEncoder(DriveConstants.encoders[index]);
+        if (DriveConstants.useEncoders) swerveEncoderAbsolute = new DutyCycleEncoder(DriveConstants.encoders[index]);
+        else swerveEncoderAbsolute = null;
         swerveConfig = new SparkMaxConfig();
 
         driveMotor = new SparkMax(
@@ -122,19 +123,21 @@ public class SwerveModule extends SubsystemBase {
         driveMotor.configure(
             driveConfig, ResetMode.kResetSafeParameters, PersistMode.kPersistParameters);
 
+        if (DriveConstants.useEncoders) {
+            
+            double relativeZero = getAbsolutePosition();
 
-        double relativeZero = getAbsolutePosition();
+            REVLibError error = swerveEncoder.setPosition(relativeZero - DriveConstants.absoluteOffsets[index]);
+            if (error.equals(REVLibError.kOk)) System.out.println("Swerve Module " + index + " is initialized!");
 
-        REVLibError error = swerveEncoder.setPosition(relativeZero - DriveConstants.absoluteOffsets[index]);    
-        
-        if (error.equals(REVLibError.kOk)) System.out.println("Swerve Module " + index + " is initialized!");
+        } else System.out.println("Swerve Module " + index + " is initialized!");
 
         currentState = new SwerveModuleState();
     }
 
     @Override
     public void periodic() {
-        absoluteEnoderConnected = getAbsolutePosition() != 0 && getAbsolutePosition() != 360;
+        absoluteEnoderConnected = getAbsolutePosition() != 0 && getAbsolutePosition() != 360 && DriveConstants.useEncoders;
     }
 
     public void setSwerveReference(double value) {

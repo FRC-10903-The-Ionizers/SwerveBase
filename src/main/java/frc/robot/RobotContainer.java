@@ -29,18 +29,18 @@ import frc.robot.util.ControllerInput;
  */
 public class RobotContainer {
 
-	CommandJoystick joystick = new CommandJoystick(OperatorConstants.operatorControllerPort);
+	// CommandJoystick joystick = new CommandJoystick(OperatorConstants.operatorControllerPort);
 	CommandXboxController xboxController = new CommandXboxController(OperatorConstants.driverControllerPort);
 
-	PowerDistribution powerDistribution = new PowerDistribution(16, ModuleType.kRev);
+	PowerDistribution powerDistribution = new PowerDistribution(16, ModuleType.kCTRE);
 
-	ControllerInput controller = new ControllerInput(xboxController, joystick);
-	Vision visionSystem = new Vision(
-        Constants.VisionConstants.ipAddress, 
-        Constants.VisionConstants.CameraRotations, 
-        null); 
+	ControllerInput controller = new ControllerInput(xboxController);
+	// Vision visionSystem = new Vision(
+    //     Constants.VisionConstants.ipAddress, 
+    //     Constants.VisionConstants.CameraRotations, 
+    //     null); 
 
-	Swerve swerve = new Swerve(controller, visionSystem);
+	Swerve swerve = new Swerve(controller);
 
 	final AutoChooser autoChooser;
     Auto auto = new Auto(swerve);
