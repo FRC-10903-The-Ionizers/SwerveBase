@@ -53,7 +53,7 @@ public class ControllerInput extends SubsystemBase {
 
     public ControllerInput(CommandXboxController controller) {
         this.controller = controller;
-        this.joystick = null;
+    this.joystick = null;
         this.visionStatus = VisionStatus.NONE;
     }
 

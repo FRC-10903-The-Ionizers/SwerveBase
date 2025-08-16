@@ -9,14 +9,9 @@ import edu.wpi.first.wpilibj.PowerDistribution;
 import edu.wpi.first.wpilibj.PowerDistribution.ModuleType;
 import edu.wpi.first.wpilibj.smartdashboard.SmartDashboard;
 import edu.wpi.first.wpilibj2.command.Command;
-import edu.wpi.first.wpilibj2.command.button.CommandJoystick;
-import edu.wpi.first.wpilibj2.command.button.CommandXboxController;
-import edu.wpi.first.wpilibj2.command.button.Trigger;
-import frc.robot.Constants.OperatorConstants;
 import frc.robot.subsystems.Swerve;
-import frc.robot.subsystems.Vision;
 import frc.robot.util.Auto;
-import frc.robot.util.ControllerInput;
+import frc.robot.subsystems.Controller;;
 
 /**
  * This class is where the bulk of the robot should be declared. Since
@@ -28,19 +23,11 @@ import frc.robot.util.ControllerInput;
  * subsystems, commands, and trigger mappings) should be declared here.
  */
 public class RobotContainer {
-
-	// CommandJoystick joystick = new CommandJoystick(OperatorConstants.operatorControllerPort);
-	CommandXboxController xboxController = new CommandXboxController(OperatorConstants.driverControllerPort);
-
 	PowerDistribution powerDistribution = new PowerDistribution(16, ModuleType.kCTRE);
 
-	ControllerInput controller = new ControllerInput(xboxController);
-	// Vision visionSystem = new Vision(
-    //     Constants.VisionConstants.ipAddress, 
-    //     Constants.VisionConstants.CameraRotations, 
-    //     null); 
+	Swerve swerve = new Swerve();
 
-	Swerve swerve = new Swerve(controller);
+	Controller controller = new Controller(swerve);
 
 	final AutoChooser autoChooser;
     Auto auto = new Auto(swerve);
@@ -64,10 +51,7 @@ public class RobotContainer {
         SmartDashboard.putData("Field", swerve.field);
         SmartDashboard.putData("Gyro", swerve.gyroAhrs);
 
-        SmartDashboard.putData("Power Distribution", powerDistribution);
-
-		// Configure the trigger bindings
-		configureBindings();
+        // SmartDashboard.putData("Power Distribution", powerDistribution);
 	}
 
 	/**
@@ -84,31 +68,6 @@ public class RobotContainer {
 	 * {@link edu.wpi.first.wpilibj2.command.button.CommandJoystick Flight
 	 * joysticks}.
 	 */
-	private void configureBindings() {
-
-		// driver bindings 
-        xboxController.start()
-            .onChange(controller.toggleNos);
-
-        xboxController.leftTrigger(0.75)
-            .onChange(controller.toggleFeildRelative);
-
-        xboxController.rightBumper()
-            .onTrue(controller.upShift);
-        
-        xboxController.leftBumper()
-            .onTrue(controller.downShift);
-
-        xboxController.b()
-            .onChange(controller.toggleRightBumper);
-        
-        xboxController.x()
-            .onChange(controller.toggleLeftBumper);
-        
-        xboxController.a()
-            .onChange(controller.a);
-
-	}
 
 	/**
 	 * Use this to pass the autonomous command to the main {@link Robot} class.

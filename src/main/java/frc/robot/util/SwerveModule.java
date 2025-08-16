@@ -170,7 +170,10 @@ public class SwerveModule extends SubsystemBase {
     }
 
     public double getAbsolutePosition() {
-        return (swerveEncoderAbsolute.get() * 360);
+        if(DriveConstants.useEncoders){
+            return (swerveEncoderAbsolute.get() * 360);
+        }
+        return(0);
     }
 
     /**

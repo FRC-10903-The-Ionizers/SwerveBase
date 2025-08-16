@@ -34,12 +34,13 @@ public class DriveForTime extends Command {
 
     @Override
     public void execute() {
-        swerve.swerveDrive(
+        swerve.setSpeeds(
             new ChassisSpeeds(
                 -1,
                 0,
                 0
-            )
+            ),
+            false
         );
     }
 
@@ -50,12 +51,13 @@ public class DriveForTime extends Command {
 
     @Override
     public void end(boolean isInterrupted) {
-        swerve.swerveDrive(
+        swerve.setSpeeds(
             new ChassisSpeeds(
                 0,
                 0,
                 0
-            )
+            ),
+            false
         );
     }
 

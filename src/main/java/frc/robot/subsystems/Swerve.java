@@ -12,30 +12,26 @@ import edu.wpi.first.math.kinematics.SwerveModulePosition;
 import edu.wpi.first.math.kinematics.SwerveModuleState;
 import edu.wpi.first.util.sendable.SendableBuilder;
 import edu.wpi.first.wpilibj.DriverStation;
+import edu.wpi.first.wpilibj2.command.Command;
+import edu.wpi.first.wpilibj2.command.Commands;
 import edu.wpi.first.wpilibj.Timer;
 import edu.wpi.first.wpilibj.smartdashboard.Field2d;
 import edu.wpi.first.wpilibj2.command.SubsystemBase;
 import frc.robot.Constants.DriveConstants;
-import frc.robot.Constants.VisionConstants;
-import frc.robot.util.ControllerInput;
-import frc.robot.util.ControllerInput.VisionStatus;
 import frc.robot.util.SwerveModule;
 
 /**
  * The physical subsystem that controls the drivetrain.
  */
 public class Swerve extends SubsystemBase {
-    private final ControllerInput controllerInput;
-
-    private final Vision visionSystem; 
-    public final AHRS gyroAhrs;
-
-    private final SwerveModule[] swerveModules = new SwerveModule[4];
-
-    private final SwerveDrivePoseEstimator poseEstimator;
-    private Pose2d currentPose;
-    public Field2d field;
-
+    // The following variables are all systems that are required for the swerve to work properly.
+    public final AHRS gyroAhrs; // This is the gyro that will be used to determine the robot's orientation and position.
+    private final SwerveModule[] swerveModules = new SwerveModule[4]; // This is an array of objects that control each individual wheel.
+    private final SwerveDrivePoseEstimator poseEstimator; // This is the pose estimator that will be used to determine the robot's position on the field.
+    private final SwerveDriveKinematics swerveDriveKinematics = new SwerveDriveKinematics(
+        DriveConstants.frontLeft, DriveConstants.frontRight,
+        DriveConstants.backLeft, DriveConstants.backRight
+    ); // This is an object that does the mathematical heavy lifting for the swerve drive kinematics, which is used to convert between chassis speeds and module states.
     private final PIDController xController = new PIDController(
         DriveConstants.xyP, DriveConstants.xyI, DriveConstants.xyD);
     private final PIDController yController = new PIDController(
@@ -43,66 +39,27 @@ public class Swerve extends SubsystemBase {
     private final PIDController turnPID = new PIDController(
         DriveConstants.turnP, DriveConstants.turnI, DriveConstants.turnD, DriveConstants.turnR);
 
-    private final SwerveDriveKinematics swerveDriveKinematics = new SwerveDriveKinematics(
-        DriveConstants.frontLeft, DriveConstants.frontRight,
-        DriveConstants.backLeft, DriveConstants.backRight
-    );
+    public Field2d field; // This is the field object that will be used to visualize the robot's position on the field in the SmartDashboard.
 
+    // The following variables are all used to keep track of the robot's current state.
+    private Pose2d currentPose;
+    private double gearMultiplier = 0.6;
+    private boolean nos = false;
+    private ChassisSpeeds targetSpeed = new ChassisSpeeds();
     private double startTime = Timer.getTimestamp();
 
-    /**
-     * Constructs a swerve subsystem with the given controller and vision systems.
+    // The following commands are used to control the swerve drive.
+    public Command upshiftCommand = Commands.runOnce(() -> upshift());
+    public Command downshiftCommand = Commands.runOnce(() -> downshift());
 
-     * @param controller - the controller object that will be used to control the drive system
-     * @param visionSystem - the vision system that will be used to control the drivetrain
-     */
-    public Swerve(ControllerInput controller, Vision visionSystem) {
-
-        // assign constructor variables
-        this.controllerInput = controller;
-        this.visionSystem = visionSystem;
-
-        // pose of the swerve is initialized to real values in Auto when auto routine is run
-        this.currentPose = new Pose2d();
-        this.field = new Field2d();
-
-        // define the gyro
-        gyroAhrs = new AHRS(NavXComType.kMXP_SPI);
-        // reset the gyro
-        gyroAhrs.reset();
-        gyroAhrs.configureVelocity(
-            false,
-            false,
-            false,
-            true
-        );
-
-        // sets up the motors
-        setupModules();
-        
-        // define pose estimator
-        poseEstimator = new SwerveDrivePoseEstimator(
-            swerveDriveKinematics,
-            gyroAhrs.getRotation2d(),
-            getSwerveModulePositions(),
-            currentPose 
-        );
-
-        turnPID.enableContinuousInput(-Math.PI, Math.PI);
-    }
+    public Command nosOnCommand = Commands.runOnce(() -> nosOn());
+    public Command nosOffCommand = Commands.runOnce(() -> nosOff());
 
     /**
-     * Constructs a swerve subsystem with the given controller and vision systems.
-
-     * @param controller - the controller object that will be used to control the drive system
-     * @param visionSystem - the vision system that will be used to control the drivetrain
+     * Constructor for the Swerve subsystem.
+     * Initializes the pose, gyro, modules, and pose estimator.
      */
-    public Swerve(ControllerInput controller) {
-
-        // assign constructor variables
-        this.controllerInput = controller;
-        this.visionSystem = null;
-
+    public Swerve() {
         // pose of the swerve is initialized to real values in Auto when auto routine is run
         this.currentPose = new Pose2d();
         this.field = new Field2d();
@@ -139,7 +96,7 @@ public class Swerve extends SubsystemBase {
 
         field.setRobotPose(currentPose);
 
-        if (!DriverStation.isAutonomousEnabled()) swerveDrive(getDriveSpeeds());
+        if (!DriverStation.isAutonomousEnabled()) swerveDrive(targetSpeed);
     }
      
     /**
@@ -147,50 +104,40 @@ public class Swerve extends SubsystemBase {
      * 
      * @return ChassisSpeeds for the swerve drive to run
      */
-    private ChassisSpeeds getDriveSpeeds() {
-        VisionStatus status = controllerInput.visionStatus();
-        ChassisSpeeds speeds;
-
-        if (visionSystem == null) {
-            // if there is no vision system, just return the controller speeds
-            return controllerInput.controllerChassisSpeeds(turnPID, gyroAhrs.getRotation2d());
+    public void setSpeeds(ChassisSpeeds chassisSpeeds, boolean fieldRelative){
+        targetSpeed = chassisSpeeds;
+        if (fieldRelative){
+            targetSpeed = ChassisSpeeds.fromRobotRelativeSpeeds(targetSpeed, gyroAhrs.getRotation2d());
         }
+    }
 
-        // if we are doing vision, then reset the gyro to prevent "whiplash"
-        if (controllerInput.visionStatus() != VisionStatus.NONE) {
-            controllerInput.setTurnTarget(gyroAhrs.getRotation2d().getRadians());
+    public void setSpeeds(double x, double y, double theta, boolean fieldRelative){
+        targetSpeed = new ChassisSpeeds(x, y, theta);
+        if (fieldRelative){
+            targetSpeed = ChassisSpeeds.fromRobotRelativeSpeeds(targetSpeed, gyroAhrs.getRotation2d());
         }
+    }
 
-        switch (status) {
-            case LEFT_POSITION: // lines the robot up with the tag
-                speeds = visionSystem.getTagDrive(VisionConstants.cameraPair, VisionConstants.tagIDs, Vision.Side.LEFT, VisionConstants.leftOffset);
-                break;
-            case RIGHT_POSITION: // lines the robot up with the tag
-                speeds = visionSystem.getTagDrive(VisionConstants.cameraPair, VisionConstants.tagIDs, Vision.Side.FRONT, VisionConstants.rightOffset);
-                break;
-            case STRAIGHT_POSITION: // lines the robot up with the tag
-                speeds = visionSystem.getTagDrive(VisionConstants.cameraPair, VisionConstants.tagIDs, Vision.Side.FRONT, VisionConstants.straightOffset);
-                break;
-            case LOCKON: // allows the robot to move freely by user input but remains facing the tag
-                // TODO: lock on with both cameras
-                ChassisSpeeds controllerSpeeds = controllerInput.controllerChassisSpeeds(
-                    turnPID, gyroAhrs.getRotation2d());
-                ChassisSpeeds lockonSpeeds = visionSystem.lockonTagSpeeds(0, null);
-                speeds = new ChassisSpeeds(
-                    controllerSpeeds.vxMetersPerSecond,
-                    controllerSpeeds.vyMetersPerSecond,
-                    lockonSpeeds.omegaRadiansPerSecond
-                );
-                break;
-            default: // if all else fails - revert to drive controls
-                speeds = controllerInput.controllerChassisSpeeds(turnPID, gyroAhrs.getRotation2d());
-                break;
+    public void upshift(){
+        gearMultiplier += 0.1;
+        if (gearMultiplier > 1){
+            gearMultiplier = 1;
         }
+    }
 
-        // this should never execute, but for our peace of mind
-        if (speeds == null) speeds = controllerInput.controllerChassisSpeeds(turnPID, gyroAhrs.getRotation2d());
+    public void downshift(){
+        gearMultiplier -= 0.1;
+        if (gearMultiplier < 0){
+            gearMultiplier = 0;
+        }
+    }
 
-        return speeds;
+    public void nosOn() {
+        nos = true;
+    }
+
+    public void nosOff() {
+        nos = false;
     }
 
     /**
@@ -198,7 +145,7 @@ public class Swerve extends SubsystemBase {
 
      * @param chassisSpeeds - the chassis speed that the robot should take
      */
-    public void swerveDrive(ChassisSpeeds chassisSpeeds) {
+    private void swerveDrive(ChassisSpeeds chassisSpeeds) {
         SwerveModuleState[] moduleState = swerveDriveKinematics.toSwerveModuleStates(chassisSpeeds);
         boolean rotate = chassisSpeeds.vxMetersPerSecond != 0 
                         || chassisSpeeds.vyMetersPerSecond != 0 
@@ -208,7 +155,7 @@ public class Swerve extends SubsystemBase {
 
         for (int i = 0; i < 4; i++) {
             SwerveModuleState targetState = moduleState[i];
-            swerveModules[i].driveModule(targetState, rotate, controllerInput.nos(), controllerInput.throttle());
+            swerveModules[i].driveModule(targetState, rotate, nos, gearMultiplier);
         }
     }
 
@@ -248,11 +195,11 @@ public class Swerve extends SubsystemBase {
         }
     }
 
-    private void setSwerveEncoders(double position) {
-        for (int i = 0; i < 4; i++) {
-            swerveModules[i].setSwerveEncoder(position);
-        }
-    }
+    // private void setSwerveEncoders(double position) {
+    //     for (int i = 0; i < 4; i++) {
+    //         swerveModules[i].setSwerveEncoder(position);
+    //     }
+    // }
 
     public SwerveModule[] getModules() {return swerveModules;}
 

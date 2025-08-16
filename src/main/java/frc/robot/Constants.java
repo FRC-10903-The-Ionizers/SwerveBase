@@ -31,10 +31,12 @@ public final class Constants {
     /** A set of constants related to the drivetrain. */
     public static class DriveConstants {
 
-        public static final int frontLeftSwervePort = 1;
-        public static final int frontRightSwervePort = 3;
-        public static final int backLeftSwervePort = 5;
-        public static final int backRightSwervePort = 7;
+        public static final int frontRightSwervePort = 2;
+        public static final int backRightSwervePort = 4;
+        public static final int backLeftSwervePort = 6;
+        public static final int frontLeftSwervePort = 8;
+        
+        
 
         public static final int[] swerveMotorPorts = {
             frontLeftSwervePort,
@@ -43,10 +45,13 @@ public final class Constants {
             backRightSwervePort
         };
 
-        public static final int frontLeftDrivePort = 2;
-        public static final int frontRightDrivePort = 4;
-        public static final int backLeftDrivePort = 6;
-        public static final int backRightDrivePort = 8;
+        public static final int frontRightDrivePort = 1;
+        public static final int backRightDrivePort = 3;
+        public static final int backLeftDrivePort = 5;
+        public static final int frontLeftDrivePort = 7;
+        
+        
+        
 
         public static final int[] driveMotorPorts = {
             frontLeftDrivePort,
@@ -59,8 +64,9 @@ public final class Constants {
 
         public static final int frontLeftEncoder = 0;
         public static final int frontRightEncoder = 1;
-        public static final int backLeftEncoder = 3;
-        public static final int backRightEncoder = 4;
+        public static final int backRightEncoder = 3;
+        public static final int backLeftEncoder = 4;
+        
 
         public static final int[] encoders = {
             frontLeftEncoder,
@@ -128,7 +134,7 @@ public final class Constants {
         public static final double inchesPerRotation = Math.PI * 3.875;
         public static final double metersPerRotation = Units.inchesToMeters(inchesPerRotation);
 
-        public static final double swerveRotationToDegrees = 360.0 / (150.0 / 7.0);
+        public static final double swerveRotationToDegrees = 360.0 / (111.93);
         public static final double driveMotorToWheel = 1 / 6.12;
 
         public static final double nosBooster = 5.25;
