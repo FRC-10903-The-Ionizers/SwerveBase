@@ -6,6 +6,7 @@ import com.studica.frc.AHRS.NavXComType;
 import edu.wpi.first.math.controller.PIDController;
 import edu.wpi.first.math.estimator.SwerveDrivePoseEstimator;
 import edu.wpi.first.math.geometry.Pose2d;
+import edu.wpi.first.math.geometry.Rotation2d;
 import edu.wpi.first.math.kinematics.ChassisSpeeds;
 import edu.wpi.first.math.kinematics.SwerveDriveKinematics;
 import edu.wpi.first.math.kinematics.SwerveModulePosition;
@@ -89,6 +90,13 @@ public class Swerve extends SubsystemBase {
         turnPID.enableContinuousInput(-Math.PI, Math.PI);
     }
 
+    public Rotation2d getFieldRelativeAngle(){
+        System.out.println(gyroAhrs.getRotation2d());
+        System.out.println(Rotation2d.fromDegrees(gyroAhrs.getFusedHeading()));
+        return Rotation2d.fromDegrees(gyroAhrs.getFusedHeading());
+        
+    }
+
     @Override
     public void periodic() {
         currentPose = poseEstimator.updateWithTime(
@@ -96,7 +104,12 @@ public class Swerve extends SubsystemBase {
 
         field.setRobotPose(currentPose);
 
-        if (!DriverStation.isAutonomousEnabled()) swerveDrive(targetSpeed);
+        if(DriverStation.isDSAttached()){
+            if (!DriverStation.isAutonomousEnabled()) swerveDrive(targetSpeed);
+        } else {
+            if (!DriverStation.isAutonomousEnabled()) swerveDrive(new ChassisSpeeds());
+
+        }
     }
      
     /**
@@ -107,14 +120,14 @@ public class Swerve extends SubsystemBase {
     public void setSpeeds(ChassisSpeeds chassisSpeeds, boolean fieldRelative){
         targetSpeed = chassisSpeeds;
         if (fieldRelative){
-            targetSpeed = ChassisSpeeds.fromRobotRelativeSpeeds(targetSpeed, gyroAhrs.getRotation2d());
+            targetSpeed = ChassisSpeeds.fromRobotRelativeSpeeds(targetSpeed, getFieldRelativeAngle());
         }
     }
 
     public void setSpeeds(double x, double y, double theta, boolean fieldRelative){
         targetSpeed = new ChassisSpeeds(x, y, theta);
         if (fieldRelative){
-            targetSpeed = ChassisSpeeds.fromRobotRelativeSpeeds(targetSpeed, gyroAhrs.getRotation2d());
+            targetSpeed = ChassisSpeeds.fromRobotRelativeSpeeds(targetSpeed, getFieldRelativeAngle());
         }
     }
 
