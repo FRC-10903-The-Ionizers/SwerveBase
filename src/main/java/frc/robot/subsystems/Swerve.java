@@ -91,12 +91,18 @@ public class Swerve extends SubsystemBase {
 
     @Override
     public void periodic() {
+
         currentPose = poseEstimator.updateWithTime(
-            startTime - Timer.getTimestamp(), gyroAhrs.getRotation2d(), getSwerveModulePositions());
+        startTime - Timer.getTimestamp(), gyroAhrs.getRotation2d(), getSwerveModulePositions());
 
         field.setRobotPose(currentPose);
-        System.out.println("Current pose: " + currentPose);
-        if (!DriverStation.isAutonomousEnabled()) swerveDrive(targetSpeed);
+
+        if(DriverStation.isDSAttached()){
+
+            if (!DriverStation.isAutonomousEnabled()) swerveDrive(targetSpeed);
+        } else {
+            if (!DriverStation.isAutonomousEnabled()) swerveDrive(new ChassisSpeeds());
+        }
     }
      
     /**
