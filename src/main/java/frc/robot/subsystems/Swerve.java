@@ -95,7 +95,7 @@ public class Swerve extends SubsystemBase {
             startTime - Timer.getTimestamp(), gyroAhrs.getRotation2d(), getSwerveModulePositions());
 
         field.setRobotPose(currentPose);
-
+        System.out.println("Current pose: " + currentPose);
         if (!DriverStation.isAutonomousEnabled()) swerveDrive(targetSpeed);
     }
      
