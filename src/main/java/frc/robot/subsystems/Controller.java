@@ -17,7 +17,11 @@ public class Controller extends SubsystemBase{
     }
 
     public void periodic(){
-        swerve.setSpeeds(xboxController.getLeftX(), xboxController.getLeftY(), xboxController.getRightX(), false);
+        if (xboxController.getAButtonPressed()) {
+            swerve.setSpeeds(-xboxController.getLeftX(), xboxController.getLeftY(), xboxController.getRightX(), true);
+        } else {
+            swerve.setSpeeds(-xboxController.getLeftX(), xboxController.getLeftY(), xboxController.getRightX(), false);
+        }
     }
     
 }
